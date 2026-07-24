@@ -185,6 +185,16 @@ select:focus-visible {
   box-shadow: 0 0 0 4px rgb(58 167 109 / 10%);
 }
 
+.header-status.checking > span:first-child {
+  background: #94a3b8;
+  box-shadow: 0 0 0 4px rgb(148 163 184 / 12%);
+}
+
+.header-status.unavailable > span:first-child {
+  background: #d34a4a;
+  box-shadow: 0 0 0 4px rgb(211 74 74 / 10%);
+}
+
 .app-main {
   width: calc(100% - 28px);
   max-width: 1060px;
@@ -445,6 +455,8 @@ select:focus-visible {
 }
 
 .stage-indicator.uploading i,
+.stage-indicator.pausing i,
+.stage-indicator.cancelling i,
 .stage-indicator.merging i {
   background: var(--blue);
   animation: status-pulse 1.4s ease infinite;
@@ -1224,6 +1236,29 @@ select:focus-visible {
   text-align: center;
 }
 
+.pagination-bar {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.pagination-bar > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.pagination-bar .secondary-button {
+  min-width: 68px;
+  height: 34px;
+  padding: 0 12px;
+}
+
 .visually-hidden {
   position: absolute !important;
   width: 1px !important;
@@ -1272,6 +1307,11 @@ select:focus-visible {
 
   .cleanup-button {
     grid-column: auto;
+  }
+
+  .pagination-bar {
+    flex-direction: row;
+    align-items: center;
   }
 }
 

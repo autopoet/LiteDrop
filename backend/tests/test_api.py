@@ -50,9 +50,7 @@ def _data(response):
     return body["data"]
 
 
-def _start_upload(
-    client: TestClient, file_name: str, size: int, download_limit: int = 1
-) -> dict:
+def _start_upload(client: TestClient, file_name: str, size: int, download_limit: int = 1) -> dict:
     response = client.post(
         "/api/uploads",
         headers={"X-Upload-Code": "upload-code"},
@@ -94,38 +92,28 @@ def test_upload_resume_share_and_range_download(client: TestClient):
     assert status["uploaded_parts"] == [0, 1, 2]
     assert status["uploaded_bytes"] == len(content)
 
-    completed = _data(
-        client.post(f"/api/uploads/{upload['upload_id']}/complete")
-    )
+    completed = _data(client.post(f"/api/uploads/{upload['upload_id']}/complete"))
     assert completed["file_name"] == "demo.txt"
     assert completed["sha256"] == hashlib.sha256(content).hexdigest()
     assert len(completed["code"]) == 6
 
     # Completing twice is idempotent and returns the original pickup code.
-    repeated = _data(
-        client.post(f"/api/uploads/{upload['upload_id']}/complete")
-    )
+    repeated = _data(client.post(f"/api/uploads/{upload['upload_id']}/complete"))
     assert repeated["code"] == completed["code"]
 
     share = _data(client.get(f"/api/shares/{completed['code']}"))
     assert share["remaining_downloads"] == 1
 
-    ticket = _data(
-        client.post(f"/api/shares/{completed['code']}/download-ticket")
-    )
+    ticket = _data(client.post(f"/api/shares/{completed['code']}/download-ticket"))
     download = client.get(ticket["download_url"])
     assert download.status_code == 200
     assert download.content == content
 
-    resumed = client.get(
-        ticket["download_url"], headers={"Range": "bytes=0-3"}
-    )
+    resumed = client.get(ticket["download_url"], headers={"Range": "bytes=0-3"})
     assert resumed.status_code == 206
     assert resumed.content == content[:4]
 
-    exhausted = client.post(
-        f"/api/shares/{completed['code']}/download-ticket"
-    )
+    exhausted = client.post(f"/api/shares/{completed['code']}/download-ticket")
     assert exhausted.status_code == 410
     assert exhausted.json()["error"]["code"] == "DOWNLOAD_LIMIT_REACHED"
 
@@ -181,7 +169,12 @@ def test_validation_admin_and_cleanup_contract(client: TestClient):
     assert overview["public_upload_enabled"] is True
 
     files = _data(client.get("/api/admin/files?q=small", headers=headers))
-    assert files == {"items": [], "total": 0}
+    assert files == {
+        "items": [],
+        "total": 0,
+        "page": 1,
+        "page_size": 20,
+    }
 
     cleanup_result = _data(client.post("/api/admin/cleanup", headers=headers))
     assert set(cleanup_result) == {

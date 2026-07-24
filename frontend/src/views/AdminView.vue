@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { ApiError, api } from "../api";
-import type { AdminFile, AdminOverview } from "../types";
+import type { AdminFile, AdminOverview, PageResult } from "../types";
 import { formatBytes, formatDate } from "../utils";
 
 const TOKEN_KEY = "codedrop:admin-token";
+const PAGE_SIZE = 10;
 
 const token = ref(sessionStorage.getItem(TOKEN_KEY) ?? "");
 const username = ref("");
@@ -13,9 +14,13 @@ const overview = ref<AdminOverview | null>(null);
 const files = ref<AdminFile[]>([]);
 const query = ref("");
 const status = ref("all");
+const page = ref(1);
+const total = ref(0);
 const loading = ref(false);
+const fileLoading = ref(false);
 const actionMessage = ref("");
 const errorMessage = ref("");
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 
 function fileStatus(file: AdminFile) {
   if (file.deleted_at) return "已删除";
@@ -29,6 +34,8 @@ function logout() {
   token.value = "";
   overview.value = null;
   files.value = [];
+  total.value = 0;
+  page.value = 1;
   sessionStorage.removeItem(TOKEN_KEY);
 }
 
@@ -41,10 +48,64 @@ function handleError(error: unknown) {
   errorMessage.value = error instanceof Error ? error.message : "操作失败，请稍后重试。";
 }
 
-async function loadFiles() {
-  if (!token.value) return;
-  const payload = await api.adminFiles(token.value, query.value.trim(), status.value);
-  files.value = Array.isArray(payload) ? payload : payload.items;
+function fileQuery() {
+  return {
+    query: query.value.trim(),
+    status: status.value,
+    page: page.value,
+    pageSize: PAGE_SIZE,
+  };
+}
+
+function applyFilePage(result: PageResult<AdminFile>) {
+  files.value = result.items;
+  total.value = result.total;
+}
+
+async function fetchFilePage() {
+  return api.adminFiles(token.value, fileQuery());
+}
+
+async function fetchValidFilePage() {
+  let result = await fetchFilePage();
+  const lastPage = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
+  if (page.value > lastPage) {
+    page.value = lastPage;
+    result = await fetchFilePage();
+  }
+  return result;
+}
+
+async function loadFiles(resetPage = false) {
+  if (!token.value || loading.value || fileLoading.value) return false;
+  const previousPage = page.value;
+  if (resetPage) page.value = 1;
+  fileLoading.value = true;
+  errorMessage.value = "";
+  try {
+    applyFilePage(await fetchValidFilePage());
+    return true;
+  } catch (error) {
+    if (resetPage) page.value = previousPage;
+    handleError(error);
+    return false;
+  } finally {
+    fileLoading.value = false;
+  }
+}
+
+async function changePage(nextPage: number) {
+  if (
+    nextPage < 1 ||
+    nextPage > pageCount.value ||
+    loading.value ||
+    fileLoading.value
+  ) {
+    return;
+  }
+  const previousPage = page.value;
+  page.value = nextPage;
+  if (!(await loadFiles())) page.value = previousPage;
 }
 
 async function loadAdmin() {
@@ -52,11 +113,12 @@ async function loadAdmin() {
   loading.value = true;
   errorMessage.value = "";
   try {
-    const [overviewResult] = await Promise.all([
+    const [overviewResult, fileResult] = await Promise.all([
       api.adminOverview(token.value),
-      loadFiles(),
+      fetchValidFilePage(),
     ]);
     overview.value = overviewResult;
+    applyFilePage(fileResult);
   } catch (error) {
     handleError(error);
   } finally {
@@ -87,6 +149,7 @@ async function removeFile(file: AdminFile) {
   try {
     await api.deleteAdminFile(token.value, file.id);
     actionMessage.value = "文件已删除。";
+    if (files.value.length === 1 && page.value > 1) page.value -= 1;
     await loadAdmin();
   } catch (error) {
     handleError(error);
@@ -206,18 +269,34 @@ onMounted(() => {
             v-model="query"
             type="search"
             placeholder="搜索文件名或取件码"
-            @keydown.enter="loadFiles"
+            :disabled="loading || fileLoading"
+            @keydown.enter.prevent="loadFiles(true)"
           />
         </div>
-        <select v-model="status" aria-label="文件状态" @change="loadFiles">
+        <select
+          v-model="status"
+          aria-label="文件状态"
+          :disabled="loading || fileLoading"
+          @change="loadFiles(true)"
+        >
           <option value="all">全部状态</option>
           <option value="active">可领取</option>
           <option value="expired">已过期</option>
         </select>
-        <button class="secondary-button" type="button" @click="loadFiles">
-          查询
+        <button
+          class="secondary-button"
+          type="button"
+          :disabled="loading || fileLoading"
+          @click="loadFiles(true)"
+        >
+          {{ fileLoading ? "查询中…" : "查询" }}
         </button>
-        <button class="secondary-button cleanup-button" type="button" @click="cleanup">
+        <button
+          class="secondary-button cleanup-button"
+          type="button"
+          :disabled="loading || fileLoading"
+          @click="cleanup"
+        >
           手动清理
         </button>
       </div>
@@ -267,11 +346,36 @@ onMounted(() => {
                 </button>
               </td>
             </tr>
-            <tr v-if="!files.length && !loading">
+            <tr v-if="!files.length && fileLoading">
+              <td colspan="7" class="table-empty">正在读取文件列表…</td>
+            </tr>
+            <tr v-else-if="!files.length && !loading">
               <td colspan="7" class="table-empty">没有符合条件的文件。</td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="pagination-bar" aria-label="文件列表分页">
+        <span>共 {{ total }} 个文件 · 第 {{ page }} / {{ pageCount }} 页</span>
+        <div>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="page <= 1 || loading || fileLoading"
+            @click="changePage(page - 1)"
+          >
+            上一页
+          </button>
+          <button
+            class="secondary-button"
+            type="button"
+            :disabled="page >= pageCount || loading || fileLoading"
+            @click="changePage(page + 1)"
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </template>
   </section>

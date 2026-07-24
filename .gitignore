@@ -30,6 +30,9 @@ storage/
 *.log
 *.tmp
 tmp/
+.e2e-data/
+playwright-report/
+test-results/
 
 # Editors and operating systems
 .idea/

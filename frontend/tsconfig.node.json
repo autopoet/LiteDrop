@@ -2,8 +2,14 @@
   "compilerOptions": {
     "noEmit": true,
     "skipLibCheck": true,
+    "target": "ES2022",
     "module": "ESNext",
-    "moduleResolution": "Bundler"
+    "moduleResolution": "Bundler",
+    "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "playwright.config.ts",
+    "e2e/**/*.ts"
+  ]
 }

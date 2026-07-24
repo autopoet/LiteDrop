@@ -1,6 +1,8 @@
 import type {
   AdminFile,
   AdminOverview,
+  HealthStatus,
+  PageResult,
   ShareFile,
   UploadResult,
   UploadStatus,
@@ -89,17 +91,29 @@ export interface InitUploadResult {
   expires_at: string;
 }
 
+export interface AdminFileQuery {
+  query?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+}
+
 export const api = {
-  initUpload(input: InitUploadInput, accessCode: string) {
+  health(signal?: AbortSignal) {
+    return request<HealthStatus>("/health", { signal });
+  },
+
+  initUpload(input: InitUploadInput, accessCode: string, signal?: AbortSignal) {
     return request<InitUploadResult>("/api/uploads", {
       method: "POST",
       headers: accessCode ? { "X-Upload-Code": accessCode } : undefined,
       body: JSON.stringify(input),
+      signal,
     });
   },
 
-  getUpload(uploadId: string) {
-    return request<UploadStatus>(`/api/uploads/${uploadId}`);
+  getUpload(uploadId: string, signal?: AbortSignal) {
+    return request<UploadStatus>(`/api/uploads/${uploadId}`, { signal });
   },
 
   uploadPart(
@@ -118,9 +132,10 @@ export const api = {
     );
   },
 
-  completeUpload(uploadId: string) {
+  completeUpload(uploadId: string, signal?: AbortSignal) {
     return request<UploadResult>(`/api/uploads/${uploadId}/complete`, {
       method: "POST",
+      signal,
     });
   },
 
@@ -153,13 +168,20 @@ export const api = {
     return request<AdminOverview>("/api/admin/overview", {}, token);
   },
 
-  adminFiles(token: string, query = "", status = "all") {
+  adminFiles(token: string, options: AdminFileQuery = {}) {
+    const {
+      query = "",
+      status = "all",
+      page = 1,
+      pageSize = 20,
+    } = options;
     const params = new URLSearchParams();
     if (query) params.set("q", query);
     if (status !== "all") params.set("status", status);
-    const suffix = params.size ? `?${params}` : "";
-    return request<AdminFile[] | { items: AdminFile[] }>(
-      `/api/admin/files${suffix}`,
+    params.set("page", String(page));
+    params.set("page_size", String(pageSize));
+    return request<PageResult<AdminFile>>(
+      `/api/admin/files?${params}`,
       {},
       token,
     );

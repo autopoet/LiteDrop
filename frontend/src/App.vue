@@ -1,13 +1,19 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { api } from "./api";
 import AdminView from "./views/AdminView.vue";
 import PickupView from "./views/PickupView.vue";
 import UploadView from "./views/UploadView.vue";
 
 type Workspace = "upload" | "pickup" | "admin";
+type ServiceState = "checking" | "available" | "unavailable";
 
 const route = ref<Workspace>("upload");
+const serviceState = ref<ServiceState>("checking");
 const year = new Date().getFullYear();
+let healthTimer: number | undefined;
+let healthController: AbortController | null = null;
+let appMounted = false;
 
 const readHash = () => {
   const value = location.hash.slice(1);
@@ -25,16 +31,52 @@ const pageLabel = computed(
     })[route.value],
 );
 
+const serviceLabel = computed(
+  () =>
+    ({
+      checking: "正在检测服务",
+      available: "服务可用",
+      unavailable: "服务暂不可用",
+    })[serviceState.value],
+);
+
 function navigate(next: Workspace) {
   location.hash = next;
 }
 
+async function checkHealth() {
+  if (healthController) return;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 5000);
+  healthController = controller;
+
+  try {
+    const health = await api.health(controller.signal);
+    if (appMounted) {
+      serviceState.value = health.status === "ok" ? "available" : "unavailable";
+    }
+  } catch {
+    if (appMounted) serviceState.value = "unavailable";
+  } finally {
+    window.clearTimeout(timeout);
+    if (healthController === controller) healthController = null;
+  }
+}
+
 onMounted(() => {
+  appMounted = true;
   readHash();
   window.addEventListener("hashchange", readHash);
+  void checkHealth();
+  healthTimer = window.setInterval(checkHealth, 60_000);
 });
 
-onBeforeUnmount(() => window.removeEventListener("hashchange", readHash));
+onBeforeUnmount(() => {
+  appMounted = false;
+  window.removeEventListener("hashchange", readHash);
+  if (healthTimer) window.clearInterval(healthTimer);
+  healthController?.abort();
+});
 </script>
 
 <template>
@@ -64,9 +106,14 @@ onBeforeUnmount(() => window.removeEventListener("hashchange", readHash));
           </button>
         </nav>
 
-        <div class="header-status" :title="pageLabel">
+        <div
+          class="header-status"
+          :class="serviceState"
+          :title="`${pageLabel} · ${serviceLabel}`"
+          aria-live="polite"
+        >
           <span></span>
-          <span class="status-label">服务可用</span>
+          <span class="status-label">{{ serviceLabel }}</span>
         </div>
       </div>
     </header>
