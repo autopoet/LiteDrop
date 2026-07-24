@@ -11,7 +11,9 @@ CodeDrop 是一个面向个人和小团队的临时文件分享服务。发送�
 - 数据库条件更新解决限次下载的并发竞争
 - SQLite、本地磁盘和单进程的低成本部署
 
-完整产品边界见 [PRD](docs/PRD.md)，推荐阅读顺序见 [学习指南](docs/LEARNING_GUIDE.md)。
+完整产品边界见 [PRD](docs/PRD.md)，V2 优化说明见
+[V2 设计说明](docs/V2_DESIGN.md)，推荐阅读顺序见
+[学习指南](docs/LEARNING_GUIDE.md)。
 
 ## 为什么做这个项目
 
@@ -23,7 +25,7 @@ CodeDrop 是一个面向个人和小团队的临时文件分享服务。发送�
 - 分片上传改善的是失败重试成本和可恢复性，不会凭空提高总带宽。
 - 它适合临时分享，不是长期网盘、对象存储或多用户协作平台。
 
-## 第一版范围
+## 项目范围
 
 包含：
 
@@ -35,6 +37,15 @@ CodeDrop 是一个面向个人和小团队的临时文件分享服务。发送�
 - Docker Compose 单机部署
 
 不包含用户系统、多文件上传、在线预览、文件去重、对象存储、Redis、消息队列和多机部署。
+
+V2 没有扩大业务范围，主要补强：
+
+- 进程重启后的合并任务恢复
+- 生产配置启动校验
+- 上传暂停的并发收尾
+- 管理列表分页与真实健康状态
+- 浏览器端到端上传、取件和下载测试
+- 管理、指标、请求依赖和分片锁的职责拆分
 
 ## 架构
 
@@ -98,6 +109,9 @@ HTTP 路由 → Pydantic Schema → Service → Peewee Model / 文件系统
    ```bash
    python -c "import secrets; print(secrets.token_urlsafe(48))"
    ```
+
+   公网部署还必须把 `APP_ENV` 设置为 `production`。生产模式会拒绝
+   默认密钥、默认上传口令和无效管理员密码哈希。
 
 3. 为管理员密码生成 PBKDF2 哈希：
 
@@ -168,6 +182,8 @@ npm run dev
 
 ```powershell
 $env:PYTHONPATH = "backend"
+.\.venv\Scripts\ruff check backend
+.\.venv\Scripts\ruff format backend --check
 .\.venv\Scripts\python -m pytest backend\tests -q
 ```
 
@@ -177,6 +193,17 @@ $env:PYTHONPATH = "backend"
 cd frontend
 npm run build
 ```
+
+完整浏览器流程：
+
+```powershell
+cd frontend
+npm run test:e2e
+```
+
+测试会自动启动隔离端口上的 FastAPI 与 Vite，上传一个跨分片边界的
+文件，再通过取件码下载并逐字节校验。Windows 默认使用本机 Chrome；
+其他系统首次运行前可执行 `npx playwright install chromium`。
 
 核心验收场景包括：
 
