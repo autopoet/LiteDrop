@@ -1,0 +1,6 @@
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
+peewee==4.2.6
+pydantic==2.12.5
+PyJWT==2.10.1
+python-multipart==0.0.32

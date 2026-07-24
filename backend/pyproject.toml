@@ -1,0 +1,9 @@
+[project]
+name = "codedrop-backend"
+version = "0.1.0"
+description = "A small FastAPI service for resumable file sharing"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

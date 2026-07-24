@@ -1,0 +1,18 @@
+{$SITE_ADDRESS:http://localhost} {
+	# A normal chunk is 5 MiB. 7 MB leaves room for multipart metadata while
+	# still preventing clients from sending a complete 200 MiB file at once.
+	@chunk_upload path_regexp chunk ^/api/uploads/[^/]+/chunks/[0-9]+$
+	request_body @chunk_upload {
+		max_size 7MB
+	}
+
+	# Keep the API and generated documentation on the same origin as the UI.
+	@backend path /api/* /health /docs /docs/* /redoc /redoc/* /openapi.json
+	handle @backend {
+		reverse_proxy backend:8000
+	}
+
+	handle {
+		reverse_proxy frontend:80
+	}
+}
