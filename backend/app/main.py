@@ -15,7 +15,7 @@ from app.api import admin, shares, uploads
 from app.core.config import settings
 from app.core.database import close_database, create_tables, initialize_database
 from app.core.errors import AppError
-from app.services import cleanup, storage
+from app.services import cleanup, recovery, storage
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,9 +32,13 @@ async def _cleanup_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    settings.validate()
     settings.prepare_directories()
     initialize_database(settings.database_path)
     create_tables()
+    recovered = recovery.recover_interrupted_merges()
+    if recovered:
+        logger.warning("Recovered %s interrupted merge(s)", recovered)
     task = asyncio.create_task(_cleanup_loop())
     try:
         yield
@@ -47,7 +51,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan,
 )
 
@@ -68,9 +72,7 @@ async def add_request_id(request: Request, call_next):
     return response
 
 
-def _error_response(
-    request: Request, status_code: int, code: str, message: str
-) -> JSONResponse:
+def _error_response(request: Request, status_code: int, code: str, message: str) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={
@@ -118,7 +120,7 @@ def health():
         "database": database_status,
         "storage": storage_status,
         "free_disk_bytes": storage.free_disk_bytes(),
-        "version": "1.0.0",
+        "version": "2.0.0",
     }
 
 

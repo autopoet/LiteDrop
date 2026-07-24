@@ -5,15 +5,20 @@ from datetime import timedelta
 
 from app.core.config import settings
 from app.core.time import utc_from_timestamp, utc_now
-from app.models import ShareFile, UploadPart, UploadSession
+from app.models import ShareFile, UploadPart, UploadSession, UploadState
 from app.services import storage
-from app.services.uploads import clear_part_locks
+from app.services.recovery import recover_stale_merges
+from app.services.upload_locks import clear_upload_locks
 
 logger = logging.getLogger(__name__)
 
 
 def run_cleanup() -> dict:
     """Remove expired data. Every step is safe to retry."""
+    recovered = recover_stale_merges()
+    if recovered:
+        logger.warning("Recovered %s stale merge(s)", recovered)
+
     now = utc_now()
     uploads_removed = 0
     files_removed = 0
@@ -22,18 +27,30 @@ def run_cleanup() -> dict:
     expired_uploads = list(
         UploadSession.select().where(
             (UploadSession.expires_at <= now)
-            & (UploadSession.status.in_(("uploading", "failed", "cancelled")))
+            & (
+                UploadSession.status.in_(
+                    (
+                        UploadState.UPLOADING,
+                        UploadState.FAILED,
+                        UploadState.CANCELLED,
+                    )
+                )
+            )
         )
     )
     for upload in expired_uploads:
         claimed = (
-            UploadSession.update(status="cancelled", updated_at=now)
+            UploadSession.update(status=UploadState.CANCELLED, updated_at=now)
             .where(
                 (UploadSession.id == upload.id)
                 & (UploadSession.expires_at <= now)
                 & (
                     UploadSession.status.in_(
-                        ("uploading", "failed", "cancelled")
+                        (
+                            UploadState.UPLOADING,
+                            UploadState.FAILED,
+                            UploadState.CANCELLED,
+                        )
                     )
                 )
             )
@@ -45,36 +62,33 @@ def run_cleanup() -> dict:
             storage.remove_upload_files(upload.id)
             UploadPart.delete().where(UploadPart.upload == upload).execute()
             UploadSession.delete_by_id(upload.id)
-            clear_part_locks(upload.id)
+            clear_upload_locks(upload.id)
             uploads_removed += 1
         except OSError:
             logger.exception("Failed to remove upload %s", upload.id)
 
     # Completion commits the share before removing parts. If the process stopped
     # between those steps, this makes the leftover cleanup recoverable.
-    completed_uploads = UploadSession.select().where(
-        UploadSession.status == "completed"
-    )
+    completed_uploads = UploadSession.select().where(UploadSession.status == UploadState.COMPLETED)
     for upload in completed_uploads:
         try:
             storage.remove_upload_files(upload.id)
             UploadPart.delete().where(UploadPart.upload == upload).execute()
-            clear_part_locks(upload.id)
+            clear_upload_locks(upload.id)
         except OSError:
             logger.exception("Failed to remove completed upload %s", upload.id)
 
     grace = timedelta(minutes=settings.download_ticket_ttl_minutes)
     removable_shares = list(
         ShareFile.select().where(
-            (ShareFile.expires_at <= now - grace)
-            | (ShareFile.deleted_at.is_null(False))
+            (ShareFile.expires_at <= now - grace) | (ShareFile.deleted_at.is_null(False))
         )
     )
     for share in removable_shares:
         try:
             storage.remove_share_file(share.relative_path)
             UploadSession.delete().where(
-                (UploadSession.status == "completed")
+                (UploadSession.status == UploadState.COMPLETED)
                 & (UploadSession.share_id == share.id)
             ).execute()
             ShareFile.delete_by_id(share.id)
@@ -90,16 +104,11 @@ def run_cleanup() -> dict:
         except OSError:
             logger.exception("Failed to remove temporary file %s", temporary.name)
 
-    referenced_paths = {
-        row.relative_path
-        for row in ShareFile.select(ShareFile.relative_path)
-    }
+    referenced_paths = {row.relative_path for row in ShareFile.select(ShareFile.relative_path)}
     for file_path in (settings.storage_root / "files").rglob("*.bin"):
         relative_path = file_path.relative_to(settings.storage_root).as_posix()
         try:
-            is_old = utc_from_timestamp(file_path.stat().st_mtime) < now - timedelta(
-                hours=2
-            )
+            is_old = utc_from_timestamp(file_path.stat().st_mtime) < now - timedelta(hours=2)
             if relative_path not in referenced_paths and is_old:
                 file_path.unlink(missing_ok=True)
                 files_removed += 1

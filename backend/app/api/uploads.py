@@ -3,17 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, Header, Request, UploadFile
 
 from app.api.common import success
+from app.api.dependencies import client_ip
 from app.schemas import UploadCreate
 from app.services import uploads
 
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",", 1)[0].strip()
-    return request.client.host if request.client else "unknown"
 
 
 @router.post("")
@@ -22,7 +16,7 @@ def create_upload(
     payload: UploadCreate,
     upload_code: str | None = Header(default=None, alias="X-Upload-Code"),
 ):
-    data = uploads.create_upload(payload, upload_code, _client_ip(request))
+    data = uploads.create_upload(payload, upload_code, client_ip(request))
     return success(request, data, status_code=201)
 
 

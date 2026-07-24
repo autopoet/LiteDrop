@@ -12,9 +12,7 @@ from app.models import ShareFile
 def _public_share(code: str) -> ShareFile:
     now = utc_now()
     share = ShareFile.get_or_none(
-        (ShareFile.code == code)
-        & (ShareFile.deleted_at.is_null())
-        & (ShareFile.expires_at > now)
+        (ShareFile.code == code) & (ShareFile.deleted_at.is_null()) & (ShareFile.expires_at > now)
     )
     if share is None:
         raise AppError(404, "SHARE_NOT_FOUND", "文件不存在或已失效")
@@ -32,9 +30,7 @@ def share_view(code: str) -> dict:
         "expires_at": share.expires_at,
         "download_limit": share.download_limit,
         "download_count": share.download_count,
-        "remaining_downloads": max(
-            share.download_limit - share.download_count, 0
-        ),
+        "remaining_downloads": max(share.download_limit - share.download_count, 0),
     }
 
 

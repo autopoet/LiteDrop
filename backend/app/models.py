@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from enum import StrEnum
+
 from peewee import (
     AutoField,
     BigIntegerField,
@@ -20,13 +22,21 @@ class BaseModel(Model):
         database = database_proxy
 
 
+class UploadState(StrEnum):
+    UPLOADING = "uploading"
+    MERGING = "merging"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class UploadSession(BaseModel):
     id = CharField(primary_key=True, max_length=36)
     file_name = TextField()
     total_size = BigIntegerField()
     chunk_size = IntegerField()
     total_chunks = IntegerField()
-    status = CharField(default="uploading", index=True)
+    status = CharField(default=UploadState.UPLOADING, index=True)
     expire_hours = IntegerField()
     download_limit = IntegerField()
     client_ip_hash = CharField(null=True, index=True)

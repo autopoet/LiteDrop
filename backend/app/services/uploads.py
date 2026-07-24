@@ -7,42 +7,24 @@ import mimetypes
 import os
 import secrets
 from datetime import timedelta
-from threading import Lock
 from uuid import uuid4
 
 from fastapi import UploadFile
-from peewee import IntegrityError, fn
+from peewee import IntegrityError
 
 from app.core.config import settings
 from app.core.database import database_proxy
 from app.core.errors import AppError
 from app.core.time import utc_now
-from app.models import ShareFile, UploadPart, UploadSession
+from app.models import ShareFile, UploadPart, UploadSession, UploadState
 from app.schemas import UploadCreate
 from app.services import storage
-
-_part_locks: dict[tuple[str, int], Lock] = {}
-_part_locks_guard = Lock()
+from app.services.metrics import get_storage_usage
+from app.services.upload_locks import clear_upload_locks, part_lock
 
 
 def hash_client_ip(client_ip: str) -> str:
-    return hmac.new(
-        settings.app_secret.encode(), client_ip.encode(), hashlib.sha256
-    ).hexdigest()
-
-
-def _part_lock(upload_id: str, part_number: int) -> Lock:
-    # A single process is deployed, so this small lock prevents duplicate part races.
-    key = (upload_id, part_number)
-    with _part_locks_guard:
-        return _part_locks.setdefault(key, Lock())
-
-
-def clear_part_locks(upload_id: str) -> None:
-    with _part_locks_guard:
-        keys = [key for key in _part_locks if key[0] == upload_id]
-        for key in keys:
-            _part_locks.pop(key, None)
+    return hmac.new(settings.app_secret.encode(), client_ip.encode(), hashlib.sha256).hexdigest()
 
 
 def _get_upload(upload_id: str) -> UploadSession:
@@ -52,21 +34,7 @@ def _get_upload(upload_id: str) -> UploadSession:
     return upload
 
 
-def _stored_bytes() -> int:
-    file_bytes = (
-        ShareFile.select(fn.COALESCE(fn.SUM(ShareFile.size), 0))
-        .where(ShareFile.deleted_at.is_null())
-        .scalar()
-    )
-    upload_bytes = UploadPart.select(
-        fn.COALESCE(fn.SUM(UploadPart.size), 0)
-    ).scalar()
-    return int(file_bytes or 0) + int(upload_bytes or 0)
-
-
-def create_upload(
-    payload: UploadCreate, access_code: str | None, client_ip: str
-) -> dict:
+def create_upload(payload: UploadCreate, access_code: str | None, client_ip: str) -> dict:
     if not settings.public_upload_enabled:
         raise AppError(403, "UPLOAD_DISABLED", "服务器已关闭上传")
     if settings.upload_access_code and not hmac.compare_digest(
@@ -92,7 +60,15 @@ def create_upload(
         UploadSession.select()
         .where(
             (UploadSession.client_ip_hash == ip_hash)
-            & (UploadSession.status.in_(("uploading", "merging", "failed")))
+            & (
+                UploadSession.status.in_(
+                    (
+                        UploadState.UPLOADING,
+                        UploadState.MERGING,
+                        UploadState.FAILED,
+                    )
+                )
+            )
             & (UploadSession.expires_at > now)
         )
         .exists()
@@ -100,7 +76,7 @@ def create_upload(
     if active_exists:
         raise AppError(409, "ACTIVE_UPLOAD_EXISTS", "当前网络已有未完成的上传")
 
-    if _stored_bytes() + payload.total_size > settings.storage_quota:
+    if get_storage_usage().total_bytes + payload.total_size > settings.storage_quota:
         raise AppError(507, "STORAGE_QUOTA_REACHED", "服务器存储配额已满")
     storage.require_disk_space(payload.total_size * 2)
 
@@ -136,8 +112,7 @@ def upload_view(upload_id: str) -> dict:
         part
         for part in recorded_parts
         if storage.part_path(upload.id, part["part_number"]).is_file()
-        and storage.part_path(upload.id, part["part_number"]).stat().st_size
-        == part["size"]
+        and storage.part_path(upload.id, part["part_number"]).stat().st_size == part["size"]
     ]
     return {
         "upload_id": upload.id,
@@ -168,20 +143,18 @@ def save_part(
         else upload.total_size - upload.chunk_size * (upload.total_chunks - 1)
     )
 
-    with _part_lock(upload_id, part_number):
+    with part_lock(upload_id, part_number):
         upload = _get_upload(upload_id)
-        if upload.status != "uploading" or upload.expires_at <= utc_now():
+        if upload.status != UploadState.UPLOADING or upload.expires_at <= utc_now():
             raise AppError(409, "UPLOAD_STATE_CONFLICT", "当前上传状态不允许写入分片")
 
         existing = UploadPart.get_or_none(
-            (UploadPart.upload == upload)
-            & (UploadPart.part_number == part_number)
+            (UploadPart.upload == upload) & (UploadPart.part_number == part_number)
         )
         if existing:
             existing_path = storage.part_path(upload.id, part_number)
             file_is_intact = (
-                existing_path.is_file()
-                and existing_path.stat().st_size == existing.size
+                existing_path.is_file() and existing_path.stat().st_size == existing.size
             )
             if file_is_intact and existing.sha256.lower() == chunk_sha256.lower():
                 return {"part_number": part_number, "idempotent": True}
@@ -195,7 +168,7 @@ def save_part(
         )
         # Completion may have started while the file was being streamed.
         upload = _get_upload(upload_id)
-        if upload.status != "uploading":
+        if upload.status != UploadState.UPLOADING:
             storage.part_path(upload_id, part_number).unlink(missing_ok=True)
             raise AppError(409, "UPLOAD_STATE_CONFLICT", "文件已开始合并")
 
@@ -205,24 +178,19 @@ def save_part(
             size=size,
             sha256=actual_sha256,
         )
-        UploadSession.update(updated_at=utc_now()).where(
-            UploadSession.id == upload.id
-        ).execute()
+        UploadSession.update(updated_at=utc_now()).where(UploadSession.id == upload.id).execute()
         return {"part_number": part_number, "idempotent": False}
 
 
 def _missing_parts(upload: UploadSession) -> tuple[list[int], list[UploadPart]]:
     parts = list(
-        UploadPart.select()
-        .where(UploadPart.upload == upload)
-        .order_by(UploadPart.part_number)
+        UploadPart.select().where(UploadPart.upload == upload).order_by(UploadPart.part_number)
     )
     by_number = {part.part_number: part for part in parts}
     missing = [
         number
         for number in range(upload.total_chunks)
-        if number not in by_number
-        or not storage.part_path(upload.id, number).is_file()
+        if number not in by_number or not storage.part_path(upload.id, number).is_file()
     ]
     ordered = [by_number[number] for number in range(upload.total_chunks) if number in by_number]
     if sum(part.size for part in ordered) != upload.total_size:
@@ -246,35 +214,34 @@ def _completed_result(upload: UploadSession) -> dict:
 
 def complete_upload(upload_id: str) -> dict:
     upload = _get_upload(upload_id)
-    if upload.status == "completed":
+    if upload.status == UploadState.COMPLETED:
         return _completed_result(upload)
-    if upload.status == "merging":
+    if upload.status == UploadState.MERGING:
         raise AppError(409, "UPLOAD_ALREADY_MERGING", "文件正在合并")
-    if upload.status not in ("uploading", "failed"):
+    if upload.status not in (UploadState.UPLOADING, UploadState.FAILED):
         raise AppError(409, "UPLOAD_STATE_CONFLICT", "当前上传状态不能完成")
 
     claimed = (
-        UploadSession.update(status="merging", updated_at=utc_now())
+        UploadSession.update(status=UploadState.MERGING, updated_at=utc_now())
         .where(
             (UploadSession.id == upload_id)
-            & (UploadSession.status.in_(("uploading", "failed")))
+            & (UploadSession.status.in_((UploadState.UPLOADING, UploadState.FAILED)))
         )
         .execute()
     )
     if claimed != 1:
         upload = _get_upload(upload_id)
-        if upload.status == "completed":
+        if upload.status == UploadState.COMPLETED:
             return _completed_result(upload)
-        if upload.status == "merging":
+        if upload.status == UploadState.MERGING:
             raise AppError(409, "UPLOAD_ALREADY_MERGING", "文件正在合并")
         raise AppError(409, "UPLOAD_STATE_CONFLICT", "当前上传状态不能完成")
 
     upload = _get_upload(upload_id)
     missing, parts = _missing_parts(upload)
     if missing:
-        UploadSession.update(status="uploading", updated_at=utc_now()).where(
-            (UploadSession.id == upload_id)
-            & (UploadSession.status == "merging")
+        UploadSession.update(status=UploadState.UPLOADING, updated_at=utc_now()).where(
+            (UploadSession.id == upload_id) & (UploadSession.status == UploadState.MERGING)
         ).execute()
         raise AppError(
             422,
@@ -328,7 +295,7 @@ def complete_upload(upload_id: str) -> dict:
                         expires_at=expires_at,
                     )
                     UploadSession.update(
-                        status="completed",
+                        status=UploadState.COMPLETED,
                         share_id=share.id,
                         updated_at=utc_now(),
                     ).where(UploadSession.id == upload.id).execute()
@@ -340,17 +307,14 @@ def complete_upload(upload_id: str) -> dict:
 
         UploadPart.delete().where(UploadPart.upload == upload).execute()
         storage.remove_upload_files(upload.id)
-        clear_part_locks(upload.id)
+        clear_upload_locks(upload.id)
         return _completed_result(_get_upload(upload.id))
     except Exception:
         temporary.unlink(missing_ok=True)
-        if destination.exists() and not ShareFile.select().where(
-            ShareFile.id == share_id
-        ).exists():
+        if destination.exists() and not ShareFile.select().where(ShareFile.id == share_id).exists():
             destination.unlink(missing_ok=True)
-        UploadSession.update(status="failed", updated_at=utc_now()).where(
-            (UploadSession.id == upload_id)
-            & (UploadSession.status == "merging")
+        UploadSession.update(status=UploadState.FAILED, updated_at=utc_now()).where(
+            (UploadSession.id == upload_id) & (UploadSession.status == UploadState.MERGING)
         ).execute()
         raise
 
@@ -358,10 +322,10 @@ def complete_upload(upload_id: str) -> dict:
 def cancel_upload(upload_id: str) -> dict:
     upload = _get_upload(upload_id)
     claimed = (
-        UploadSession.update(status="cancelled", updated_at=utc_now())
+        UploadSession.update(status=UploadState.CANCELLED, updated_at=utc_now())
         .where(
             (UploadSession.id == upload.id)
-            & (UploadSession.status.in_(("uploading", "failed")))
+            & (UploadSession.status.in_((UploadState.UPLOADING, UploadState.FAILED)))
         )
         .execute()
     )
@@ -369,5 +333,5 @@ def cancel_upload(upload_id: str) -> dict:
         raise AppError(409, "UPLOAD_STATE_CONFLICT", "当前上传状态不能取消")
     UploadPart.delete().where(UploadPart.upload == upload).execute()
     storage.remove_upload_files(upload.id)
-    clear_part_locks(upload.id)
+    clear_upload_locks(upload.id)
     return {"upload_id": upload.id, "status": "cancelled"}
