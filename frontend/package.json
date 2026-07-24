@@ -1,17 +1,20 @@
 {
   "name": "codedrop-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "node e2e/prepare.mjs && playwright test"
   },
   "dependencies": {
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.0",
+    "@types/node": "^22.20.1",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.7.2",
     "vite": "^6.0.5",

@@ -3,7 +3,9 @@ export type UploadStage =
   | "selected"
   | "initializing"
   | "uploading"
+  | "pausing"
   | "paused"
+  | "cancelling"
   | "merging"
   | "completed"
   | "failed";
@@ -63,6 +65,19 @@ export interface AdminFile {
   expires_at: string;
   status?: string;
   deleted_at?: string | null;
+}
+
+export interface PageResult<T> {
+  items: T[];
+  total: number;
+}
+
+export interface HealthStatus {
+  status: "ok" | "error";
+  database: "ok" | "error";
+  storage: "ok" | "error";
+  free_disk_bytes: number;
+  version: string;
 }
 
 export interface ResumeRecord {

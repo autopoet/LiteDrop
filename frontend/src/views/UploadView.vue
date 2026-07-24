@@ -40,7 +40,9 @@ const stageLabel = computed(
       selected: "准备上传",
       initializing: "正在创建会话",
       uploading: "正在上传分片",
+      pausing: "正在暂停上传",
       paused: "上传已暂停",
+      cancelling: "正在取消上传",
       merging: "服务器正在合并",
       completed: "上传完成",
       failed: "上传遇到问题",
@@ -289,7 +291,27 @@ async function copyCode() {
             暂停上传
           </button>
           <button
-            v-if="stage !== 'merging' && stage !== 'initializing'"
+            v-if="stage === 'pausing'"
+            class="primary-button full"
+            type="button"
+            disabled
+          >
+            正在等待在途分片…
+          </button>
+          <button
+            v-if="stage === 'cancelling'"
+            class="primary-button full"
+            type="button"
+            disabled
+          >
+            正在删除临时分片…
+          </button>
+          <button
+            v-if="
+              stage !== 'merging' &&
+              stage !== 'initializing' &&
+              stage !== 'cancelling'
+            "
             class="secondary-button full"
             type="button"
             @click="cancel"
