@@ -44,7 +44,7 @@ export default defineConfig({
         APP_ENV: "test",
         APP_SECRET: "e2e-app-secret-with-enough-length",
         DOWNLOAD_SECRET: "e2e-download-secret-with-enough-length",
-        DATABASE_PATH: resolve(runtimeRoot, "codedrop.db"),
+        DATABASE_PATH: resolve(runtimeRoot, "litedrop.db"),
         STORAGE_ROOT: resolve(runtimeRoot, "storage"),
         DISK_RESERVE_BYTES: "0",
         PUBLIC_UPLOAD_ENABLED: "true",

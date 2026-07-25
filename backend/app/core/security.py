@@ -100,7 +100,7 @@ def decode_token(secret: str, token: str, expected_type: str) -> dict[str, Any]:
 
 
 def _main() -> None:
-    parser = argparse.ArgumentParser(description="CodeDrop security helpers")
+    parser = argparse.ArgumentParser(description="LiteDrop security helpers")
     subparsers = parser.add_subparsers(dest="command", required=True)
     command = subparsers.add_parser("hash-password")
     command.add_argument("password")

@@ -58,11 +58,11 @@ class Settings:
             if item.strip()
         )
         return cls(
-            app_name=os.getenv("APP_NAME", "CodeDrop"),
+            app_name=os.getenv("APP_NAME", "LiteDrop"),
             app_env=os.getenv("APP_ENV", "development"),
             app_secret=os.getenv("APP_SECRET", "dev-app-secret-change-me"),
             download_secret=os.getenv("DOWNLOAD_SECRET", "dev-download-secret-change-me"),
-            database_path=Path(os.getenv("DATABASE_PATH", "data/codedrop.db")),
+            database_path=Path(os.getenv("DATABASE_PATH", "data/litedrop.db")),
             storage_root=Path(os.getenv("STORAGE_ROOT", "storage")),
             chunk_size=_int("CHUNK_SIZE_BYTES", 5 * MIB),
             max_chunk_size=_int("MAX_CHUNK_SIZE_BYTES", 6 * MIB),
