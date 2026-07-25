@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
 
 test("upload, pick up and download the same file", async ({ page }) => {
-  const content = Buffer.alloc(6 * 1024 * 1024 + 17, "CodeDrop V2");
-  const fileName = "codedrop-e2e.bin";
+  const content = Buffer.alloc(6 * 1024 * 1024 + 17, "LiteDrop V2");
+  const fileName = "litedrop-e2e.bin";
 
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles({

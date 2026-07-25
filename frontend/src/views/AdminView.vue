@@ -4,7 +4,7 @@ import { ApiError, api } from "../api";
 import type { AdminFile, AdminOverview, PageResult } from "../types";
 import { formatBytes, formatDate } from "../utils";
 
-const TOKEN_KEY = "codedrop:admin-token";
+const TOKEN_KEY = "litedrop:admin-token";
 const PAGE_SIZE = 10;
 
 const token = ref(sessionStorage.getItem(TOKEN_KEY) ?? "");

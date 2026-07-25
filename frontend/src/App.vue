@@ -87,7 +87,7 @@ onBeforeUnmount(() => {
           <span class="brand-mark" aria-hidden="true">
             <span></span><span></span><span></span>
           </span>
-          <span>CodeDrop</span>
+          <span>LiteDrop</span>
         </button>
 
         <nav class="main-nav" aria-label="主导航">
@@ -126,7 +126,7 @@ onBeforeUnmount(() => {
     </main>
 
     <footer class="app-footer">
-      <span>CodeDrop · 临时文件传输</span>
+      <span>LiteDrop · 临时文件传输</span>
       <span>{{ year }} · 单文件上限 200 MiB</span>
     </footer>
   </div>

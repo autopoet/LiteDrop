@@ -1,1 +1,1 @@
-"""CodeDrop backend package."""
+"""LiteDrop backend package."""

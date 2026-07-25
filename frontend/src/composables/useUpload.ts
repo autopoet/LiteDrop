@@ -10,7 +10,7 @@ import { sha256 } from "../utils";
 
 const MAX_FILE_SIZE = 200 * 1024 * 1024;
 const CONCURRENCY = 3;
-const RESUME_KEY = "codedrop:pending-upload";
+const RESUME_KEY = "litedrop:pending-upload";
 
 interface UploadRun {
   pauseRequested: boolean;
